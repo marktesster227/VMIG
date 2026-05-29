@@ -9,6 +9,7 @@ const PORT = 3000;
 
 const db = new sqlite3.Database('./vmig.db');
 
+// Таблицы с полем images (сразу создаётся правильно)
 db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,12 +31,12 @@ db.serialize(() => {
         city TEXT,
         condition TEXT,
         description TEXT,
-        image TEXT,
+        images TEXT,
         views INTEGER DEFAULT 0
     )`);
 });
 
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '150mb' }));
 app.use(cookieParser());
 
 const auth = (req, res, next) => {
@@ -98,20 +99,44 @@ app.put('/api/user/theme', auth, (req, res) => {
 
 app.get('/api/ads', (req, res) => {
     db.all(`SELECT * FROM ads ORDER BY id DESC`, [], (err, rows) => {
-        res.json(rows || []);
+        if (err) return res.status(500).json({ error: err.message });
+        rows.forEach(row => {
+            if (row.images) {
+                try {
+                    row.images = JSON.parse(row.images);
+                } catch(e) { row.images = []; }
+            } else {
+                row.images = [];
+            }
+        });
+        res.json(rows);
     });
 });
 
 app.get('/api/my-ads', auth, (req, res) => {
     db.all(`SELECT * FROM ads WHERE user_id = ? ORDER BY id DESC`, [req.userId], (err, rows) => {
-        res.json(rows || []);
+        if (err) return res.status(500).json({ error: err.message });
+        rows.forEach(row => {
+            if (row.images) {
+                try {
+                    row.images = JSON.parse(row.images);
+                } catch(e) { row.images = []; }
+            } else {
+                row.images = [];
+            }
+        });
+        res.json(rows);
     });
 });
 
 app.post('/api/ads', auth, (req, res) => {
-    const { title, category, subcategory, price, phone, city, condition, description, image } = req.body;
-    db.run(`INSERT INTO ads (user_id, title, category, subcategory, price, phone, city, condition, description, image) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-        [req.userId, title, category, subcategory, price, phone, city, condition, description, image],
+    const { title, category, subcategory, price, phone, city, condition, description, images } = req.body;
+    if (!title || !category || !price || !phone) {
+        return res.status(400).json({ error: 'Заполните обязательные поля' });
+    }
+    const imagesJson = images && Array.isArray(images) ? JSON.stringify(images) : null;
+    db.run(`INSERT INTO ads (user_id, title, category, subcategory, price, phone, city, condition, description, images) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        [req.userId, title, category, subcategory, price, phone, city, condition, description, imagesJson],
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ id: this.lastID, success: true });
@@ -136,8 +161,8 @@ app.get('/api/stats', (req, res) => {
     });
 });
 
-app.get('/', (req, res) => {
-    res.send(`<!DOCTYPE html>
+// Весь HTML вынесен в отдельную переменную, чтобы избежать конфликта шаблонных строк
+const htmlContent = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -148,21 +173,14 @@ app.get('/', (req, res) => {
             font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
             background: #f0f2f5;
             padding: 20px;
-            transition: background 0.3s ease;
+            transition: background 0.3s ease, color 0.2s ease;
         }
         body.dark { background: #121212; color: #e0e0e0; }
-        
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(15px); }
             to { opacity: 1; transform: translateY(0); }
         }
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.02); }
-        }
-        
         .container { max-width: 1200px; margin: 0 auto; }
-        
         .header {
             background: #002f34;
             color: white;
@@ -186,14 +204,13 @@ app.get('/', (req, res) => {
             transition: transform 0.2s;
         }
         .logo:hover { transform: scale(1.02); }
-        
         .btn {
             padding: 8px 18px;
             border: none;
             border-radius: 10px;
             cursor: pointer;
             font-weight: 600;
-            transition: all 0.2s;
+            transition: all 0.2s ease;
         }
         .btn:hover { transform: translateY(-2px); opacity: 0.9; }
         .btn:active { transform: translateY(0); }
@@ -201,20 +218,18 @@ app.get('/', (req, res) => {
         .btn-secondary { background: rgba(255,255,255,0.15); color: white; }
         .btn-chat { background: #9c27b0; color: white; }
         .btn-danger { background: #ff5252; color: white; }
-        
         .card {
             background: white;
             border-radius: 20px;
             padding: 24px;
             margin-bottom: 24px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-            transition: all 0.3s;
+            transition: all 0.3s ease;
             animation: fadeIn 0.3s;
         }
         body.dark .card { background: #1e1e1e; }
         .card:hover { transform: translateY(-3px); box-shadow: 0 8px 30px rgba(0,0,0,0.12); }
         .card h3 { color: #00a896; margin-bottom: 18px; }
-        
         .form-group { margin-bottom: 16px; }
         label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 14px; }
         .required::after { content: " *"; color: #ff5252; }
@@ -238,7 +253,6 @@ app.get('/', (req, res) => {
             box-shadow: 0 0 0 3px rgba(0,168,150,0.1);
         }
         .row { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
-        
         .tabs {
             display: flex;
             gap: 8px;
@@ -261,7 +275,6 @@ app.get('/', (req, res) => {
         .tab.active { color: #00a896; border-bottom: 3px solid #00a896; }
         .tab-content { display: none; animation: fadeIn 0.3s; }
         .tab-content.active { display: block; }
-        
         .search-filters {
             display: flex;
             gap: 12px;
@@ -270,10 +283,9 @@ app.get('/', (req, res) => {
         }
         .search-filters input, .search-filters select { flex: 1; min-width: 120px; }
         .price-input { width: 110px; }
-        
         .ads-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
             gap: 24px;
         }
         .ad-card {
@@ -281,23 +293,35 @@ app.get('/', (req, res) => {
             border-radius: 20px;
             overflow: hidden;
             cursor: pointer;
-            transition: all 0.3s;
+            transition: all 0.3s cubic-bezier(0.2, 0.9, 0.4, 1.1);
             box-shadow: 0 4px 12px rgba(0,0,0,0.08);
             animation: fadeIn 0.4s;
         }
         body.dark .ad-card { background: #1e1e1e; }
         .ad-card:hover { transform: translateY(-6px); box-shadow: 0 12px 28px rgba(0,0,0,0.15); }
-        .ad-image {
+        .ad-images {
             height: 200px;
-            background: linear-gradient(135deg, #e0e0e0, #f0f0f0);
+            background: #e0e0e0;
+            display: flex;
+            overflow-x: auto;
+            scroll-snap-type: x mandatory;
+            gap: 2px;
+        }
+        .ad-images img {
+            height: 100%;
+            width: auto;
+            object-fit: cover;
+            scroll-snap-align: start;
+        }
+        .ad-images div {
+            height: 200px;
+            width: 100%;
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 48px;
-            overflow: hidden;
+            scroll-snap-align: start;
         }
-        .ad-card:hover .ad-image img { transform: scale(1.05); }
-        .ad-image img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; }
         .ad-content { padding: 18px; }
         .ad-category {
             background: #00a896;
@@ -321,7 +345,19 @@ app.get('/', (req, res) => {
         .ad-price { font-size: 22px; color: #ff5252; font-weight: bold; margin: 8px 0; }
         .ad-meta { font-size: 12px; color: #888; margin: 8px 0; display: flex; gap: 12px; }
         .ad-phone { color: #00a896; font-weight: 600; margin: 8px 0; }
-        
+        .preview-images {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .preview-images img {
+            width: 80px;
+            height: 80px;
+            object-fit: cover;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+        }
         .modal {
             display: none;
             position: fixed;
@@ -359,7 +395,6 @@ app.get('/', (req, res) => {
             transition: transform 0.2s;
         }
         .close:hover { transform: rotate(90deg); }
-        
         .chat-messages {
             height: 320px;
             overflow-y: auto;
@@ -397,13 +432,11 @@ app.get('/', (req, res) => {
         body.dark .chat-message.bot .message-bubble { background: #444; color: white; }
         .chat-input { display: flex; gap: 10px; }
         .chat-input input { flex: 1; border-radius: 24px; }
-        
         .empty { text-align: center; padding: 50px; color: #888; }
         .about-section { text-align: center; padding: 30px; margin-top: 30px; border-radius: 20px; background: white; }
         body.dark .about-section { background: #1e1e1e; }
         .stats { display: flex; justify-content: center; gap: 40px; margin: 20px 0; }
         .stat-number { font-size: 32px; font-weight: bold; color: #00a896; }
-        
         @media (max-width: 768px) {
             body { padding: 12px; }
             .row { grid-template-columns: 1fr; }
@@ -437,7 +470,8 @@ app.get('/', (req, res) => {
                     <div class="row"><div class="form-group"><label class="required">Цена</label><input type="number" id="price" required></div><div class="form-group"><label class="required">Телефон</label><input type="text" id="phone" required></div></div>
                     <div class="row"><div class="form-group"><label>Город</label><input type="text" id="city"></div><div class="form-group"><label>Состояние</label><select id="condition"><option value="new">🆕 Новое</option><option value="used">🔄 Б/у</option></select></div></div>
                     <div class="form-group"><label>Описание</label><textarea id="description" rows="3"></textarea></div>
-                    <div class="form-group"><label>Фото</label><input type="file" id="imageFile" accept="image/*"></div>
+                    <div class="form-group"><label>Фото (до 15 шт, каждое до 50 МБ)</label><input type="file" id="imageFiles" multiple accept="image/*"></div>
+                    <div id="previewImages" class="preview-images"></div>
                     <button type="submit" class="btn btn-primary" style="width:100%">📢 Опубликовать</button>
                 </form>
             </div>
@@ -504,7 +538,16 @@ let allAds = [];
 function escape(t){if(!t)return '';return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function catName(c){return{electronics:'📱 Электроника',appliances:'🔌 Техника',furniture:'🪑 Мебель',clothing:'👕 Одежда',realestate:'🏠 Недвижимость',auto:'🚗 Авто',other:'📦 Другое'}[c]||c;}
 function renderAd(ad){
-    return '<div class="ad-card" data-id="'+ad.id+'"><div class="ad-image">'+(ad.image?'<img src="'+ad.image+'">':'📷')+'</div><div class="ad-content"><span class="ad-category">'+catName(ad.category)+'</span>'+(ad.subcategory?'<span class="ad-subcategory">'+escape(ad.subcategory)+'</span>':'')+'<div class="ad-title">'+escape(ad.title)+'</div><div class="ad-price">'+Number(ad.price).toLocaleString()+' ₽</div><div class="ad-meta"><span>👁️ '+(ad.views||0)+'</span><span>📍 '+(ad.city||'Не указан')+'</span></div><div class="ad-phone">📞 '+escape(ad.phone)+'</div>'+(ad.description?'<div style="font-size:13px;color:#888;margin-top:8px">'+escape(ad.description.substring(0,80))+'</div>':'')+(currentUser&&ad.user_id===currentUser.id?'<button class="btn btn-danger" style="width:100%;margin-top:12px" onclick="event.stopPropagation();deleteAd('+ad.id+')">🗑️ Удалить</button>':'')+'</div></div>';
+    let imagesHtml = '<div class="ad-images">';
+    if (ad.images && ad.images.length) {
+        for (let i = 0; i < ad.images.length; i++) {
+            imagesHtml += '<img src="' + ad.images[i] + '" loading="lazy">';
+        }
+    } else {
+        imagesHtml += '<div>📷</div>';
+    }
+    imagesHtml += '</div>';
+    return '<div class="ad-card" data-id="'+ad.id+'">'+imagesHtml+'<div class="ad-content"><span class="ad-category">'+catName(ad.category)+'</span>'+(ad.subcategory?'<span class="ad-subcategory">'+escape(ad.subcategory)+'</span>':'')+'<div class="ad-title">'+escape(ad.title)+'</div><div class="ad-price">'+Number(ad.price).toLocaleString()+' ₽</div><div class="ad-meta"><span>👁️ '+(ad.views||0)+'</span><span>📍 '+(ad.city||'Не указан')+'</span></div><div class="ad-phone">📞 '+escape(ad.phone)+'</div>'+(ad.description?'<div style="font-size:13px;color:#888;margin-top:8px">'+escape(ad.description.substring(0,80))+'</div>':'')+(currentUser&&ad.user_id===currentUser.id?'<button class="btn btn-danger" style="width:100%;margin-top:12px" onclick="event.stopPropagation();deleteAd('+ad.id+')">🗑️ Удалить</button>':'')+'</div></div>';
 }
 async function loadAds(){const r=await fetch('/api/ads');allAds=await r.json();const c=document.getElementById('adsList');if(!allAds.length){c.innerHTML='<div class="empty">📭 Пока нет объявлений</div>';return;}c.innerHTML=allAds.map(a=>renderAd(a)).join('');}
 async function loadMyAds(){if(!currentUser)return;const r=await fetch('/api/my-ads');const a=await r.json();const c=document.getElementById('myAdsList');if(!a.length){c.innerHTML='<div class="empty">📭 У вас пока нет объявлений</div>';return;}c.innerHTML=a.map(ad=>renderAd(ad)).join('');}
@@ -536,9 +579,7 @@ async function deleteAd(id){if(!confirm('🗑️ Удалить объявлен
 async function checkAuth(){try{const r=await fetch('/api/user');if(r.ok){currentUser=await r.json();document.getElementById('authBtn').style.display='none';document.getElementById('userBtn').style.display='inline-block';document.getElementById('userBtn').textContent='👤 '+(currentUser.name||currentUser.email);if(currentUser.theme==='dark')document.body.classList.add('dark');document.getElementById('profileName').value=currentUser.name||'';document.getElementById('profileCity').value=currentUser.city||'';document.getElementById('profilePhone').value=currentUser.phone||'';await loadMyAds();}}catch(e){}}
 function updateSub(){const cat=document.getElementById('category').value;const g=document.getElementById('subGroup');const s=document.getElementById('subcategory');if(cat&&subs[cat]){let opts='<option value="">Выберите подкатегорию</option>';for(let i=0;i<subs[cat].length;i++)opts+='<option value="'+subs[cat][i]+'">'+subs[cat][i]+'</option>';s.innerHTML=opts;g.style.display='block';}else{g.style.display='none';}}
 
-// ИНИЦИАЛИЗАЦИЯ ВСЕХ ОБРАБОТЧИКОВ
 document.getElementById('category')?.addEventListener('change', updateSub);
-
 document.querySelectorAll('.tab').forEach(btn => {
     btn.addEventListener('click', () => {
         const tab = btn.getAttribute('data-tab');
@@ -550,7 +591,6 @@ document.querySelectorAll('.tab').forEach(btn => {
         if (tab === 'all') filterAds();
     });
 });
-
 document.getElementById('aboutBtn')?.addEventListener('click', async () => {
     const about = document.getElementById('aboutSection');
     about.style.display = about.style.display === 'none' ? 'block' : 'none';
@@ -561,7 +601,6 @@ document.getElementById('aboutBtn')?.addEventListener('click', async () => {
         document.getElementById('totalUsers').textContent = stats.users;
     }
 });
-
 document.getElementById('themeBtn')?.addEventListener('click', async () => {
     if (!currentUser) { alert('Авторизуйтесь для смены темы'); return; }
     const isDark = document.body.classList.contains('dark');
@@ -570,7 +609,6 @@ document.getElementById('themeBtn')?.addEventListener('click', async () => {
     else document.body.classList.remove('dark');
     await fetch('/api/user/theme', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ theme: newTheme }) });
 });
-
 document.getElementById('chatBtn')?.addEventListener('click', () => document.getElementById('chatModal').classList.add('active'));
 document.getElementById('closeChat')?.addEventListener('click', () => document.getElementById('chatModal').classList.remove('active'));
 document.getElementById('sendChat')?.addEventListener('click', () => {
@@ -593,11 +631,9 @@ document.getElementById('sendChat')?.addEventListener('click', () => {
     }, 500);
     container.scrollTop = container.scrollHeight;
 });
-
 document.getElementById('authBtn')?.addEventListener('click', () => document.getElementById('authModal').classList.add('active'));
 document.getElementById('closeAuth')?.addEventListener('click', () => document.getElementById('authModal').classList.remove('active'));
 document.getElementById('userBtn')?.addEventListener('click', () => document.querySelector('.tab[data-tab="settings"]').click());
-
 document.getElementById('showLogin')?.addEventListener('click', () => {
     document.getElementById('loginForm').style.display = 'block';
     document.getElementById('registerForm').style.display = 'none';
@@ -606,7 +642,6 @@ document.getElementById('showRegister')?.addEventListener('click', () => {
     document.getElementById('loginForm').style.display = 'none';
     document.getElementById('registerForm').style.display = 'block';
 });
-
 document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const res = await fetch('/api/login', {
@@ -629,7 +664,6 @@ document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
         alert('✅ Вход выполнен');
     } else alert('❌ Неверный email или пароль');
 });
-
 document.getElementById('registerForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const res = await fetch('/api/register', {
@@ -653,7 +687,6 @@ document.getElementById('registerForm')?.addEventListener('submit', async (e) =>
         alert('✅ Регистрация успешна');
     } else alert('❌ Ошибка регистрации');
 });
-
 document.getElementById('profileForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!currentUser) return;
@@ -670,16 +703,39 @@ document.getElementById('profileForm')?.addEventListener('submit', async (e) => 
     document.getElementById('userBtn').textContent = '👤 ' + (currentUser.name || currentUser.email);
     alert('✅ Настройки сохранены');
 });
-
+document.getElementById('imageFiles')?.addEventListener('change', function(e) {
+    const preview = document.getElementById('previewImages');
+    preview.innerHTML = '';
+    const files = Array.from(e.target.files);
+    if (files.length > 15) { alert('Можно загрузить не более 15 фото'); this.value = ''; return; }
+    files.forEach(file => {
+        if (file.size > 50 * 1024 * 1024) { alert('Файл больше 50 МБ'); this.value = ''; preview.innerHTML = ''; return; }
+        const reader = new FileReader();
+        reader.onload = function(ev) {
+            const img = document.createElement('img');
+            img.src = ev.target.result;
+            img.style.width = '80px'; img.style.height = '80px'; img.style.objectFit = 'cover';
+            img.style.borderRadius = '8px'; img.style.border = '1px solid #ddd';
+            preview.appendChild(img);
+        };
+        reader.readAsDataURL(file);
+    });
+});
 document.getElementById('adForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!currentUser) { alert('Авторизуйтесь'); return; }
-    let img = null;
-    const file = document.getElementById('imageFile').files[0];
-    if (file) {
+    const files = document.getElementById('imageFiles').files;
+    if (files.length > 15) { alert('Максимум 15 фото'); return; }
+    const images = [];
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file.size > 50 * 1024 * 1024) { alert('Фото больше 50 МБ'); return; }
         const reader = new FileReader();
-        reader.readAsDataURL(file);
-        await new Promise(resolve => reader.onload = () => { img = reader.result; resolve(); });
+        const data = await new Promise((resolve) => {
+            reader.onload = () => resolve(reader.result);
+            reader.readAsDataURL(file);
+        });
+        images.push(data);
     }
     const data = {
         title: document.getElementById('title').value,
@@ -690,22 +746,18 @@ document.getElementById('adForm')?.addEventListener('submit', async (e) => {
         city: document.getElementById('city').value,
         condition: document.getElementById('condition').value,
         description: document.getElementById('description').value,
-        image: img
+        images: images
     };
-    const res = await fetch('/api/ads', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-    });
+    const res = await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     if (res.ok) {
         alert('✅ Объявление опубликовано');
         document.getElementById('adForm').reset();
         document.getElementById('subGroup').style.display = 'none';
+        document.getElementById('previewImages').innerHTML = '';
         await loadAds();
         if (currentUser) await loadMyAds();
     } else alert('❌ Ошибка');
 });
-
 document.getElementById('searchInput')?.addEventListener('input', filterAds);
 document.getElementById('searchCat')?.addEventListener('change', filterAds);
 document.getElementById('searchSort')?.addEventListener('change', filterAds);
@@ -713,8 +765,6 @@ document.getElementById('minPrice')?.addEventListener('input', filterAds);
 document.getElementById('maxPrice')?.addEventListener('input', filterAds);
 document.getElementById('searchCity')?.addEventListener('input', filterAds);
 document.getElementById('searchCondition')?.addEventListener('change', filterAds);
-
-// Добавляем просмотры при клике на карточку
 document.addEventListener('click', (e) => {
     const card = e.target.closest('.ad-card');
     if (card && !e.target.closest('button')) {
@@ -722,13 +772,13 @@ document.addEventListener('click', (e) => {
         if (id) fetch('/api/ads/' + id + '/view', { method: 'POST' });
     }
 });
-
 loadAds();
 checkAuth();
 window.deleteAd = deleteAd;
 </script>
 </body>
-</html>`);
-});
+</html>`;
 
-app.listen(PORT, () => console.log('✅ Сервер запущен: http://localhost:' + PORT));
+app.get('/', (req, res) => res.send(htmlContent));
+
+app.listen(PORT, '0.0.0.0', () => console.log('✅ Сервер запущен: http://localhost:' + PORT));
